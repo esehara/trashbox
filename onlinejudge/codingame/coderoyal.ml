@@ -157,21 +157,38 @@ let unwrap_string_option option = match option with
   | Some x -> x
   | None -> "WAIT";;
 
+type delay = {order: string option; time: int};;
+
+let grow_tower_delay = ref {order = None; time = 0};;
 let grow_tower queen touched sites option: order option = match option with
   | Some _ -> option
   | None ->
-    let towers = my_tower_of_sites queen sites |> List.filter (fun x -> x.range < 400) in
-    (* Debug *) Printf.sprintf "Non grow tower: %d" (List.length towers) |> prerr_endline;
-    match towers with
-    | [] -> None
-    | hd::tl ->
-      (* Debug *) hd.range |> Printf.sprintf "Tower Range: %d" |> prerr_endline;
-      if touched = hd.siteid
-      then Some (Grow (Printf.sprintf "BUILD %d TOWER" touched))
-      else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y));;
+    grow_tower_delay :=
+      begin
+        match !grow_tower_delay.order with
+        | Some x when !grow_tower_delay.time = 0 -> {order = None; time = 0}
+        | Some x -> {order = Some x; time = !grow_tower_delay.time - 1}
+        | None -> {order = None; time = 0}
+      end;
+    match !grow_tower_delay.order with
+    | Some x -> Some (Grow x)
+    | None ->
+      let towers = my_tower_of_sites queen sites |> List.filter (fun x -> x.range < 300) in
+      (* Debug *) Printf.sprintf "Non grow tower: %d" (List.length towers) |> prerr_endline;
+      match towers with
+      | [] -> None
+      | hd::tl ->
+        (* Debug *) hd.range |> Printf.sprintf "Tower Range: %d" |> prerr_endline;
+        let order =
+          begin
+            if touched = hd.siteid
+            then Printf.sprintf "BUILD %d TOWER" touched
+            else Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y
+          end in
+        grow_tower_delay := {order = Some order; time = 5};
+        Some (Grow order);;
 
 let grow_target_mine mine = mine.info.rank < 2;;
-
 let grow_mine queen touched sites option: order option = match option with
   | Some _ -> option
   | None ->
@@ -183,6 +200,14 @@ let grow_mine queen touched sites option: order option = match option with
       then Some (Grow (Printf.sprintf "BUILD %d MINE" touched))
       else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y))
 
+let build_mine_or_tower sites (option: order option) =
+  match option with
+  | None ->
+    if (List.length (tower_of_sites sites)) > (List.length (mine_of_sites sites))
+    then Some (Build "MINE")
+    else Some (Build "TOWER")
+  | Some _ -> option
+
 let queen_stategy queen touched (sites: site list) =
   (* Debug *) Printf.sprintf "Queen Touch: %d" touched |> prerr_endline;
   let new_build_target = no_owner_site sites |> near_site queen in
@@ -192,11 +217,10 @@ let queen_stategy queen touched (sites: site list) =
         |> grow_tower queen touched sites
         |> build_check (mine_of_sites sites) "MINE"
         |> grow_mine queen touched (mine_of_sites sites)
-        |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
         |> build_check (archer_of_barrack sites) "BARRACKS-ARCHER"
+        |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
         |> build_check (giant_of_barrack sites) "BARRACKS-GIANT"
-        |> build_check_for_three (mine_of_sites sites) "MINE"
-        |> build_check_for_three (tower_of_sites sites) "TOWER"
+        |> build_mine_or_tower sites
         |> build_check_finally new_build_target touched
         |> unwrap_string_option
   else "WAIT";;
