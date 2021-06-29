@@ -9,10 +9,10 @@ let rec site_parser n result = match n with
     let siteid, x, y, radius = Scanf.sscanf (input_line stdin) " %d  %d  %d  %d" (fun siteid x y radius -> (siteid, x, y, radius)) in
     let site = {id = siteid; x = x; y = y; radius = radius } in
     site_parser (n - 1) (site :: result);;
-let sites = site_parser numsites [];;
+let field = site_parser numsites [];;
 
 (* structuretype: -1 = No structure, 2 = Barracks *)
-type structure = None | Barrack | Tower;;
+type structure = None | Barrack | Tower | GoldMine;;
 
 (* owner: -1 = No structure, 0 = Friendly, 1 = Enemy *)
 type owner = None | Friendly | Enemy;;
@@ -23,29 +23,30 @@ let owner_of_int owner = match owner with
   | _ -> failwith "Invlid Owner";;
 
 (* unittype: -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT*)
-type unittype = Queen | Knight | Archer | Giant | Tower of int;;
+type unittype = Queen | Knight | Archer | Giant | Value of int ;;
 type tower = {siteid: int; range: int; pos: pos};;
 let unittype_of_int unittype = match unittype with
   | -1 -> Queen
   | 0 -> Knight
   | 1 -> Archer
   | 2 -> Giant
-  | _ -> Tower unittype;;
+  | _ -> Value unittype;;
 
-type info = {structure: structure; owner: owner; unittype: unittype};;
+type info = {structure: structure; owner: owner; unittype: unittype; rank: int};;
 type site = {siteid: int; pos: pos; info: info};;
 type unitinfo = {unittype: unittype; owner: owner; x: int; y: int};;
 
-let build_site siteid structuretype owner unittype =
+let build_site siteid structuretype owner unittype rank =
   let structure = match structuretype with
     | 2 -> Barrack
     | 1 -> Tower
+    | 0 -> GoldMine
     | -1 -> None
     | _ -> failwith "Invalid Structure type" in
   let owner = owner_of_int owner in
-  let pos = List.find (fun x -> x.id = siteid ) sites in
+  let pos = List.find (fun x -> x.id = siteid ) field in
   let unittype = unittype_of_int unittype in
-  {siteid = siteid; pos = pos; info = {structure = structure; owner = owner; unittype = unittype}};;
+  {siteid = siteid; pos = pos; info = {structure = structure; owner = owner; unittype = unittype; rank = rank}};;
 
 (* --- parser --- *)
 let rec siteinfo_parser n result = match n with
@@ -55,7 +56,7 @@ let rec siteinfo_parser n result = match n with
       Scanf.sscanf (input_line stdin) " %d  %d  %d  %d  %d  %d  %d"
         (fun siteid ignore1 ignore2 structuretype owner param1 param2 ->
            (siteid, ignore1, ignore2, structuretype, owner, param1, param2)) in
-    let siteinfo = build_site siteid structuretype owner param2 in
+    let siteinfo = build_site siteid structuretype owner param2 param1 in
     siteinfo_parser (n - 1) (siteinfo :: result);;
 
 let rec unit_parser n result = match n with
@@ -95,49 +96,92 @@ let dist queen (site_pos: pos) =
 
 let no_owner_site (sites: site list) = List.filter (fun x -> x.info.owner = None) sites;;
 let near_site queen (sites: site list) = List.sort (fun x y -> compare (dist queen x.pos) (dist queen y.pos)) sites;;
+(* --- Site Utility -- *)
 let my_site_of_sites sites = List.filter (fun x -> x.info.owner = Friendly) sites;;
-let barrack_of_sites sites = List.filter (fun x -> x.info.structure = Barrack) sites;;
-let tower_of_sites sites = List.filter (fun x -> x.info.structure = Tower) sites;;
 
+let any_of_sites sites structure_type = List.filter (fun x -> x.info.structure = structure_type) sites;;
+let barrack_of_sites sites = any_of_sites sites Barrack;;
+let tower_of_sites sites = any_of_sites sites Tower;;
+let mine_of_sites sites = any_of_sites sites GoldMine;;
 (* --- Barracks ---- *)
 let any_of_barracks sites unittype = List.filter (fun x -> x.info.unittype = unittype) sites;;
 let archer_of_barrack sites = any_of_barracks sites Archer;;
 let knight_of_barrack sites = any_of_barracks sites Knight;;
 let giant_of_barrack sites = any_of_barracks sites Giant;;
+
+type order =
+    Build of string
+  | Grow of string
+
 (* ----------------- *)
+let prerr_option (option: order option) = Printf.sprintf "Option Value: %s"
+    begin
+      match option with
+      | None -> "None"
+      | Some x -> match x with
+        | Build _ -> "Build"
+        | Grow _ -> "Grow"
+    end |> prerr_endline;;
 
-let build_check sites build_string (option: string option) = match option with
-  | None when (List.length sites) < 1 -> Some build_string
+let build_check sites build_string (option: order option) = prerr_option option;
+  match option with
+  | None when (List.length sites) < 1 -> Some (Build build_string)
   | _ -> option;;
 
-let build_check_for_tower site build_string (option: string option) = match option with
-  | None when (List.length sites) < 3 -> Some build_string
+let build_check_for_three sites build_string (option: order option) =
+  prerr_endline (Printf.sprintf "Check Build Three: %d" (List.length sites));
+  match option with
+  | None when (List.length sites) < 3 -> Some (Build build_string)
   | _ -> option;;
 
-let build_check_finally new_build_target touched (option: string option): string option  = match option with
+let build_check_finally new_build_target touched (option: order option): string option  = match option with
+  | None -> None
   | Some x ->
     let target = List.hd new_build_target in
-
     (* Debug *) Printf.sprintf "Target Site: %d" target.siteid |> prerr_endline;
-    if target.siteid = touched then Some (Printf.sprintf "BUILD %d %s" touched x)
-    else Some (Printf.sprintf "MOVE %d %d" target.pos.x target.pos.y)
-  | None -> None;;
+    match x with
+    | Grow x -> Some x
+    | Build x ->
+      if target.siteid = touched
+      then Some (Printf.sprintf "BUILD %d %s" touched x)
+      else Some (Printf.sprintf "MOVE %d %d" target.pos.x target.pos.y);;
 
 let tower_of_site (site: site): tower = match site.info.unittype with
-  | Tower x -> {siteid = site.siteid; range = x; pos = site.pos}
+  | Value x -> {siteid = site.siteid; range = x; pos = site.pos}
   | _ -> failwith "cannot convate 'sites' to 'tower'";;
 
 let my_tower_of_sites queen sites: tower list =
-  my_site_of_sites sites |> tower_of_sites |> List.map tower_of_site
-  |> List.sort (fun (x: tower) (y: tower) -> compare (dist queen x.pos) (dist queen y.pos));;
+  my_site_of_sites sites |> tower_of_sites |> List.map tower_of_site;;
 
-let grow_tower_if_build_check_none queen touched sites option: string = match option with
+let unwrap_string_option option = match option with
   | Some x -> x
+  | None -> "WAIT";;
+
+let grow_tower queen touched sites option: order option = match option with
+  | Some _ -> option
   | None ->
-    let t = my_tower_of_sites queen sites |> List.hd in
-    if touched = t.siteid
-    then Printf.sprintf "BUILD %d TOWER" touched
-    else Printf.sprintf "MOVE %d %d" t.pos.x t.pos.y;;
+    let towers = my_tower_of_sites queen sites |> List.filter (fun x -> x.range < 400) in
+    (* Debug *) Printf.sprintf "Non grow tower: %d" (List.length towers) |> prerr_endline;
+    match towers with
+    | [] -> None
+    | hd::tl ->
+      (* Debug *) hd.range |> Printf.sprintf "Tower Range: %d" |> prerr_endline;
+      if touched = hd.siteid
+      then Some (Grow (Printf.sprintf "BUILD %d TOWER" touched))
+      else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y));;
+
+let grow_target_mine mine = mine.info.rank < 2;;
+
+let grow_mine queen touched sites option: order option = match option with
+  | Some _ -> option
+  | None ->
+    let mines = mine_of_sites sites |> List.filter grow_target_mine in
+    match mines with
+    | [] -> None
+    | hd::tl ->
+      if touched = hd.siteid
+      then Some (Grow (Printf.sprintf "BUILD %d MINE" touched))
+      else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y))
 
 let queen_stategy queen touched (sites: site list) =
   (* Debug *) Printf.sprintf "Queen Touch: %d" touched |> prerr_endline;
@@ -145,12 +189,16 @@ let queen_stategy queen touched (sites: site list) =
   if List.length new_build_target > 0 then
         let sites = my_site_of_sites sites in
         build_check (tower_of_sites sites) "TOWER" None
+        |> grow_tower queen touched sites
+        |> build_check (mine_of_sites sites) "MINE"
+        |> grow_mine queen touched (mine_of_sites sites)
         |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
         |> build_check (archer_of_barrack sites) "BARRACKS-ARCHER"
         |> build_check (giant_of_barrack sites) "BARRACKS-GIANT"
-        |> build_check_for_tower (tower_of_sites sites) "TOWER"
+        |> build_check_for_three (mine_of_sites sites) "MINE"
+        |> build_check_for_three (tower_of_sites sites) "TOWER"
         |> build_check_finally new_build_target touched
-        |> grow_tower_if_build_check_none queen touched sites
+        |> unwrap_string_option
   else "WAIT";;
 
 (*
