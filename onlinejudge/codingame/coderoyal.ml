@@ -80,13 +80,7 @@ let find_my_queen units = my_units units |> List.find (fun x -> x.unittype = Que
 (* - game strategy --- *)
 (*
    -- Queen Strategy --
-   Queenがやること -> 一行目:
-     -> 移動する = MOVE
-     -> 建物を立てる = BUILD siteid (BALLACKS-KNIGHT | BALLACKES-ARCHER)
-     -> 待つ = WAIT
 
-   Wood League ->
-     -> とりあえず一番近くの空いているsiteにバラックを建てる
 *)
 let dist queen (site_pos: pos) =
   let x = (queen.x - site_pos.x) in
@@ -95,7 +89,11 @@ let dist queen (site_pos: pos) =
   sqrt pre_sqrt;;
 
 let no_owner_site (sites: site list) = List.filter (fun x -> x.info.owner = None) sites;;
-let near_site queen (sites: site list) = List.sort (fun x y -> compare (dist queen x.pos) (dist queen y.pos)) sites;;
+let near_site queen (sites: site list) =
+  List.sort (fun x y -> compare (dist queen x.pos) (dist queen y.pos)) sites;;
+
+let so_far_site queen (sites: site list) =
+  List.sort (fun x y -> (compare (dist queen x.pos) (dist queen y.pos)) * -1) sites;;
 (* --- Site Utility -- *)
 let my_site_of_sites sites = List.filter (fun x -> x.info.owner = Friendly) sites;;
 
@@ -114,6 +112,16 @@ type order =
   | Grow of string
 
 (* ----------------- *)
+type mine = Work of int | Done;;
+let mine_hash = Hashtbl.create 50;;
+let grow_target_mine mine = mine.info.rank = 1;;
+let growable_target_mine mine =
+  match (Hashtbl.find_opt mine_hash mine.siteid) with
+  | None -> true
+  | Some x -> match x with
+    | Done -> false
+    | Work _ -> true;;
+
 let prerr_option (option: order option) = Printf.sprintf "Option Value: %s"
     begin
       match option with
@@ -125,23 +133,26 @@ let prerr_option (option: order option) = Printf.sprintf "Option Value: %s"
 
 let build_check sites build_string (option: order option) = prerr_option option;
   match option with
-  | None when (List.length sites) < 1 -> Some (Build build_string)
+  | None -> begin
+      let mine_size = List.length (mine_of_sites sites) in
+      let tower_size = List.length (tower_of_sites sites) in
+      match build_string with
+      | "MINE" when mine_size < tower_size -> Some (Build "MINE")
+      | "TOWER" when tower_size <= mine_size -> Some (Build "TOWER")
+      | _ when (List.length sites) < 1 -> Some (Build build_string)
+      | _ -> None end
   | _ -> option;;
 
-let build_check_for_three sites build_string (option: order option) =
-  prerr_endline (Printf.sprintf "Check Build Three: %d" (List.length sites));
-  match option with
-  | None when (List.length sites) < 3 -> Some (Build build_string)
-  | _ -> option;;
-
-let build_check_finally new_build_target touched (option: order option): string option  = match option with
+let build_check_finally new_build_near new_build_far touched (option: order option): string option  = match option with
   | None -> None
   | Some x ->
-    let target = List.hd new_build_target in
-    (* Debug *) Printf.sprintf "Target Site: %d" target.siteid |> prerr_endline;
     match x with
     | Grow x -> Some x
     | Build x ->
+      let target = match x with
+        | "MINE" ->
+          List.hd new_build_far
+        | _ -> List.hd new_build_near in
       if target.siteid = touched
       then Some (Printf.sprintf "BUILD %d %s" touched x)
       else Some (Printf.sprintf "MOVE %d %d" target.pos.x target.pos.y);;
@@ -158,7 +169,6 @@ let unwrap_string_option option = match option with
   | None -> "WAIT";;
 
 type delay = {order: string option; time: int};;
-
 let grow_tower_delay = ref {order = None; time = 0};;
 let grow_tower queen touched sites option: order option = match option with
   | Some _ -> option
@@ -188,41 +198,49 @@ let grow_tower queen touched sites option: order option = match option with
         grow_tower_delay := {order = Some order; time = 5};
         Some (Grow order);;
 
-let grow_target_mine mine = mine.info.rank < 2;;
+let order_grow_mine sites siteid =
+  let order_string siteid = Some (Grow (Printf.sprintf "BUILD %d MINE" siteid)) in
+  match Hashtbl.find_opt mine_hash siteid with
+  | None -> Hashtbl.add mine_hash siteid (Work 1); order_string siteid
+  | Some x -> match x with
+    | Done -> failwith "Done is filltering, but it is done..."
+    | Work previous_rank ->
+      let current_mine = List.find (fun x -> x.siteid = siteid) sites in
+      if current_mine.siteid = previous_rank
+      then (Hashtbl.replace mine_hash siteid Done; None)
+      else (Hashtbl.replace mine_hash siteid (Work current_mine.siteid); order_string siteid);;
+
+
 let grow_mine queen touched sites option: order option = match option with
   | Some _ -> option
   | None ->
-    let mines = mine_of_sites sites |> List.filter grow_target_mine in
+    let mines = mine_of_sites sites |> List.filter grow_target_mine
+                |> List.filter growable_target_mine
+    in
     match mines with
     | [] -> None
     | hd::tl ->
       if touched = hd.siteid
-      then Some (Grow (Printf.sprintf "BUILD %d MINE" touched))
+      then order_grow_mine mines hd.siteid
       else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y))
 
-let build_mine_or_tower sites (option: order option) =
-  match option with
-  | None ->
-    if (List.length (tower_of_sites sites)) > (List.length (mine_of_sites sites))
-    then Some (Build "MINE")
-    else Some (Build "TOWER")
-  | Some _ -> option
-
-let queen_stategy queen touched (sites: site list) =
+let queen_stategy units touched (sites: site list) =
   (* Debug *) Printf.sprintf "Queen Touch: %d" touched |> prerr_endline;
-  let new_build_target = no_owner_site sites |> near_site queen in
-  if List.length new_build_target > 0 then
-        let sites = my_site_of_sites sites in
-        build_check (tower_of_sites sites) "TOWER" None
-        |> grow_tower queen touched sites
-        |> build_check (mine_of_sites sites) "MINE"
-        |> grow_mine queen touched (mine_of_sites sites)
-        |> build_check (archer_of_barrack sites) "BARRACKS-ARCHER"
-        |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
-        |> build_check (giant_of_barrack sites) "BARRACKS-GIANT"
-        |> build_mine_or_tower sites
-        |> build_check_finally new_build_target touched
-        |> unwrap_string_option
+  let my_queen = find_my_queen units in
+  let enemy_queen = find_enemy_queen units in
+  let new_build_near = no_owner_site sites |> near_site my_queen in
+  let new_build_far = no_owner_site sites |> so_far_site enemy_queen in
+  if List.length new_build_near > 0 then
+    let sites = my_site_of_sites sites in
+    build_check (archer_of_barrack sites) "BARRACKS-ARCHER" None
+    |> grow_tower my_queen touched sites
+    |> grow_mine my_queen touched sites
+    |> build_check sites "MINE"
+    |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
+    |> build_check (giant_of_barrack sites) "BARRACKS-GIANT"
+    |> build_check sites "TOWER"
+    |> build_check_finally new_build_near new_build_far touched
+    |> unwrap_string_option
   else "WAIT";;
 
 (*
@@ -287,14 +305,11 @@ while true do
 
     let numunits = int_of_string (input_line stdin) in
     let units = unit_parser numunits [] in
-    let queen_unit =
-      my_units units
-      |> List.find (fun x -> x.unittype = Queen) in
     (* Write an action using print_endline *)
     (* To debug: prerr_endline "Debug message"; *)
 
     (* First line: A valid queen action *)
     (* Second line: A set of training instructions *)
-    queen_stategy queen_unit touchedsite sites |> print_endline;
+    queen_stategy units touchedsite sites |> print_endline;
     train_strategy gold sites units |> print_endline;
 done;
