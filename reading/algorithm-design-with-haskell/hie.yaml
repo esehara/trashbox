@@ -1,0 +1,16 @@
+cradle:
+  cabal:
+    - path: "src"
+      component: "lib:algorithm-design-with-haskell"
+
+    - path: "app/Main.hs"
+      component: "algorithm-design-with-haskell:exe:algorithm-design-with-haskell-exe"
+
+    - path: "app/Paths_algorithm_design_with_haskell.hs"
+      component: "algorithm-design-with-haskell:exe:algorithm-design-with-haskell-exe"
+
+    - path: "test"
+      component: "algorithm-design-with-haskell:test:algorithm-design-with-haskell-test"
+
+    - path: "./"
+      component: "algorithm-design-with-haskell:test:doctest"

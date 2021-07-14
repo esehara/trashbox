@@ -32,11 +32,12 @@ let unittype_of_int unittype = match unittype with
   | 2 -> Giant
   | _ -> Value unittype;;
 
-type info = {structure: structure; owner: owner; unittype: unittype; rank: int};;
+type info = {gold: int; max_size: int;
+  structure: structure; owner: owner; unittype: unittype; rank: int};;
 type site = {siteid: int; pos: pos; info: info};;
 type unitinfo = {unittype: unittype; owner: owner; x: int; y: int};;
 
-let build_site siteid structuretype owner unittype rank =
+let build_site siteid gold max_size structuretype owner unittype rank =
   let structure = match structuretype with
     | 2 -> Barrack
     | 1 -> Tower
@@ -46,17 +47,19 @@ let build_site siteid structuretype owner unittype rank =
   let owner = owner_of_int owner in
   let pos = List.find (fun x -> x.id = siteid ) field in
   let unittype = unittype_of_int unittype in
-  {siteid = siteid; pos = pos; info = {structure = structure; owner = owner; unittype = unittype; rank = rank}};;
+  {siteid = siteid; pos = pos;
+   info = {gold = gold; max_size = max_size;
+     structure = structure; owner = owner; unittype = unittype; rank = rank}};;
 
 (* --- parser --- *)
 let rec siteinfo_parser n result = match n with
   | 0 -> result
   | _ ->
-    let siteid, ignore1, ignore2, structuretype, owner, param1, param2 =
+    let siteid, gold, max_size, structuretype, owner, param1, param2 =
       Scanf.sscanf (input_line stdin) " %d  %d  %d  %d  %d  %d  %d"
-        (fun siteid ignore1 ignore2 structuretype owner param1 param2 ->
-           (siteid, ignore1, ignore2, structuretype, owner, param1, param2)) in
-    let siteinfo = build_site siteid structuretype owner param2 param1 in
+        (fun siteid gold max_size structuretype owner param1 param2 ->
+           (siteid, gold, max_size, structuretype, owner, param1, param2)) in
+    let siteinfo = build_site siteid gold max_size structuretype owner param2 param1 in
     siteinfo_parser (n - 1) (siteinfo :: result);;
 
 let rec unit_parser n result = match n with
@@ -112,15 +115,7 @@ type order =
   | Grow of string
 
 (* ----------------- *)
-type mine = Work of int | Done;;
-let mine_hash = Hashtbl.create 50;;
-let grow_target_mine mine = mine.info.rank = 1;;
-let growable_target_mine mine =
-  match (Hashtbl.find_opt mine_hash mine.siteid) with
-  | None -> true
-  | Some x -> match x with
-    | Done -> false
-    | Work _ -> true;;
+let growable_target_mine mine = mine.info.rank <> mine.info.max_size;;
 
 let prerr_option (option: order option) = Printf.sprintf "Option Value: %s"
     begin
@@ -131,19 +126,30 @@ let prerr_option (option: order option) = Printf.sprintf "Option Value: %s"
         | Grow _ -> "Grow"
     end |> prerr_endline;;
 
-let build_check sites build_string (option: order option) = prerr_option option;
+let build_check enemy_near sites build_string (option: order option) = prerr_option option;
   match option with
   | None -> begin
-      let mine_size = List.length (mine_of_sites sites) in
       let tower_size = List.length (tower_of_sites sites) in
+      let friendly_structure = List.length (my_site_of_sites sites) in
       match build_string with
-      | "MINE" when mine_size < tower_size -> Some (Build "MINE")
-      | "TOWER" when tower_size <= mine_size -> Some (Build "TOWER")
+      | "MINE" -> Some (Build (if enemy_near then "NEAR-TOWER" else "MINE"))
+      | "TOWER" when (friendly_structure - tower_size) > tower_size -> Some (Build "TOWER")
       | _ when (List.length sites) < 1 -> Some (Build build_string)
       | _ -> None end
   | _ -> option;;
 
-let build_check_finally new_build_near new_build_far touched (option: order option): string option  = match option with
+let need_mine = 1;;
+let build_latest_mine sites option =
+  match option with
+  | Some _ -> option
+  | None -> let mine_size = List.length (mine_of_sites sites) in
+    if mine_size < need_mine then Some (Build "MINE") else None;;
+
+let use_for_mine sites = List.filter (fun site -> site.info.gold > 0) sites;;
+let build_check_finally sites units touched (option: order option): string option =
+  let my_queen = find_my_queen units in
+  let enemy_queen = find_enemy_queen units in
+  match option with
   | None -> None
   | Some x ->
     match x with
@@ -151,10 +157,11 @@ let build_check_finally new_build_near new_build_far touched (option: order opti
     | Build x ->
       let target = match x with
         | "MINE" ->
-          List.hd new_build_far
-        | _ -> List.hd new_build_near in
+          let mine_check = use_for_mine sites |> so_far_site enemy_queen in
+          List.hd (if List.length mine_check > 0 then mine_check else (near_site my_queen sites))
+        | _ -> List.hd (near_site my_queen sites) in
       if target.siteid = touched
-      then Some (Printf.sprintf "BUILD %d %s" touched x)
+      then Some (Printf.sprintf "BUILD %d %s" touched (if x = "NEAR-TOWER" then "TOWER" else x))
       else Some (Printf.sprintf "MOVE %d %d" target.pos.x target.pos.y);;
 
 let tower_of_site (site: site): tower = match site.info.unittype with
@@ -195,51 +202,68 @@ let grow_tower queen touched sites option: order option = match option with
             then Printf.sprintf "BUILD %d TOWER" touched
             else Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y
           end in
-        grow_tower_delay := {order = Some order; time = 5};
+        grow_tower_delay := {order = Some order; time = 1};
         Some (Grow order);;
-
-let order_grow_mine sites siteid =
-  let order_string siteid = Some (Grow (Printf.sprintf "BUILD %d MINE" siteid)) in
-  match Hashtbl.find_opt mine_hash siteid with
-  | None -> Hashtbl.add mine_hash siteid (Work 1); order_string siteid
-  | Some x -> match x with
-    | Done -> failwith "Done is filltering, but it is done..."
-    | Work previous_rank ->
-      let current_mine = List.find (fun x -> x.siteid = siteid) sites in
-      if current_mine.siteid = previous_rank
-      then (Hashtbl.replace mine_hash siteid Done; None)
-      else (Hashtbl.replace mine_hash siteid (Work current_mine.siteid); order_string siteid);;
-
 
 let grow_mine queen touched sites option: order option = match option with
   | Some _ -> option
   | None ->
-    let mines = mine_of_sites sites |> List.filter grow_target_mine
-                |> List.filter growable_target_mine
+    let mines = mine_of_sites sites |> List.filter growable_target_mine
     in
     match mines with
     | [] -> None
     | hd::tl ->
       if touched = hd.siteid
-      then order_grow_mine mines hd.siteid
+      then Some (Grow (Printf.sprintf "BUILD %d MINE" touched))
       else Some (Grow (Printf.sprintf "MOVE %d %d" hd.pos.x hd.pos.y))
+
+let separate_by_queen sites queen =
+  let left = List.filter (fun site -> site.pos.x <= queen.x ) sites in
+  let right = List.filter (fun site -> site.pos.x > queen.x ) sites in
+  (left, right);;
+
+let select_by_queen my_queen enemy_queen sites =
+  let (left, right) = separate_by_queen sites enemy_queen in
+
+  (* Debug *) Printf.sprintf "Brank Site: %d <-> %d" (List.length left) (List.length right) |> prerr_endline;
+
+  if my_queen.x <= enemy_queen.x && (List.length left) > 0
+  then left else right;;
+
+let limit_enemy_dist = 200.0;;
+let pos_of_unit unit: pos = {id = 0; x = unit.x; y = unit.y; radius = 0};;
+let enemy_near_queen units queen =
+  let enemy_units = List.filter (fun unit -> unit.owner = Enemy) units in
+  let is_near_unit unit =
+    let unit_pos = (pos_of_unit unit) in
+    Printf.sprintf "Enemy Units: %d %d (dist: %f)" unit_pos.x unit_pos.y (dist queen unit_pos) |> prerr_endline;
+    (dist queen (pos_of_unit unit)) < limit_enemy_dist in
+  let try_near_units = List.find_opt is_near_unit enemy_units in
+  match try_near_units with
+  | None -> false
+  | Some _ -> true;;
 
 let queen_stategy units touched (sites: site list) =
   (* Debug *) Printf.sprintf "Queen Touch: %d" touched |> prerr_endline;
   let my_queen = find_my_queen units in
   let enemy_queen = find_enemy_queen units in
-  let new_build_near = no_owner_site sites |> near_site my_queen in
-  let new_build_far = no_owner_site sites |> so_far_site enemy_queen in
-  if List.length new_build_near > 0 then
+  let target_sites = select_by_queen my_queen enemy_queen (no_owner_site sites) in
+  let enemy_near = enemy_near_queen units my_queen in
+  let build_check = build_check enemy_near in
+  if List.length target_sites > 0 then
     let sites = my_site_of_sites sites in
-    build_check (archer_of_barrack sites) "BARRACKS-ARCHER" None
-    |> grow_tower my_queen touched sites
+    (*  --- Grow Strategy --- *)
+
+    grow_tower my_queen touched sites None
     |> grow_mine my_queen touched sites
-    |> build_check sites "MINE"
+    (*  --- Build Strategy --- *)
+    |> build_latest_mine sites
+    |> build_check sites "TOWER"
+    |> build_check (archer_of_barrack sites) "BARRACKS-ARCHER"
     |> build_check (knight_of_barrack sites) "BARRACKS-KNIGHT"
     |> build_check (giant_of_barrack sites) "BARRACKS-GIANT"
-    |> build_check sites "TOWER"
-    |> build_check_finally new_build_near new_build_far touched
+    |> build_check sites "MINE"
+    |> build_check_finally target_sites units touched
     |> unwrap_string_option
   else "WAIT";;
 
@@ -259,6 +283,7 @@ let queen_stategy units touched (sites: site list) =
 let archers_of_units units = List.filter (fun x -> x.unittype = Archer) units;;
 let giants_of_units units = List.filter (fun x -> x.unittype = Giant) units;;
 
+let archer_number = 2;;
 let rec can_train gold units sites =
   let my_queen = find_my_queen units in
   let enemy_queen = find_enemy_queen units in
@@ -271,7 +296,7 @@ let rec can_train gold units sites =
   if (List.length giants < 1) && (List.length giant_barracks > 0) then
     if (gold < 140) then []
     else [near_site my_queen giant_barracks |> List.hd]
-  else if (List.length archers < 2) && (List.length archer_barracks > 0) then
+  else if (List.length archers < archer_number) && (List.length archer_barracks > 0) then
     begin
       if (gold < 100) then []
       else
@@ -305,11 +330,10 @@ while true do
 
     let numunits = int_of_string (input_line stdin) in
     let units = unit_parser numunits [] in
-    (* Write an action using print_endline *)
-    (* To debug: prerr_endline "Debug message"; *)
 
     (* First line: A valid queen action *)
-    (* Second line: A set of training instructions *)
     queen_stategy units touchedsite sites |> print_endline;
+
+    (* Second line: A set of training instructions *)
     train_strategy gold sites units |> print_endline;
 done;
