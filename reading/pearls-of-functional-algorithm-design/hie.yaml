@@ -1,0 +1,13 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "pearls-of-functional-algorithm-design:lib"
+
+    - path: "./app/Main.hs"
+      component: "pearls-of-functional-algorithm-design:exe:pearls-of-functional-algorithm-design-exe"
+
+    - path: "./app/Paths_pearls_of_functional_algorithm_design.hs"
+      component: "pearls-of-functional-algorithm-design:exe:pearls-of-functional-algorithm-design-exe"
+
+    - path: "./test"
+      component: "pearls-of-functional-algorithm-design:test:pearls-of-functional-algorithm-design-test"

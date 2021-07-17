@@ -1,6 +1,6 @@
-name:                algorithm-design-with-haskell
+name:                pearls-of-functional-algorithm-design
 version:             0.1.0.0
-github:              "githubuser/algorithm-design-with-haskell"
+github:              "githubuser/pearls-of-functional-algorithm-design"
 license:             BSD3
 author:              "Author name here"
 maintainer:          "example@example.com"
@@ -17,7 +17,7 @@ extra-source-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/githubuser/algorithm-degign-with-haskell#readme>
+description:         Please see the README on GitHub at <https://github.com/githubuser/pearls-of-functional-algorithm-design#readme>
 
 dependencies:
 - base >= 4.7 && < 5
@@ -33,7 +33,7 @@ library:
   source-dirs: src
 
 executables:
-  algorithm-design-with-haskell-exe:
+  pearls-of-functional-algorithm-design-exe:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -41,12 +41,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - algorithm-design-with-haskell
+    - pearls-of-functional-algorithm-design
 
 tests:
-  doctest:
-    main: test/doctests.hs
-  algorithm-design-with-haskell-test:
+  pearls-of-functional-algorithm-design-test:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
@@ -54,4 +52,4 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - algorithm-design-with-haskell
+    - pearls-of-functional-algorithm-design

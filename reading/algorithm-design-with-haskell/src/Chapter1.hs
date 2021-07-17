@@ -1,4 +1,7 @@
+{-# LANGUAGE DataKinds #-}
+
 module Chapter1 where
+import Data.Bool
 
 {-| Exercise 1.3: 
 
@@ -47,14 +50,14 @@ myMap f = foldr (\a b -> f a : b) []
 --  >>> myFilter (/= 0) [1, 0, 2, 0, 3]
 --  [1,2,3]
 
-myFilter f = foldr (\a b -> if f a then a : b else b) []
+myFilter f = foldr (\a b -> bool b (a : b) $ f a) []
 
 -- | Exercise 1.6: fold f e . filter g == foldFilter f e g
 -- 
 --   >>> foldFilter (+) 0 odd [1,2,3,4,5]
 --   9
 
-foldFilter f e g = foldr (\a b -> if g a then f a b else b) e
+foldFilter f e g = foldr (\a b -> bool b (f a b) $ g a) e
 
 -- | Exercise 1.7 : myTakeWhile
 --
@@ -63,4 +66,31 @@ foldFilter f e g = foldr (\a b -> if g a then f a b else b) e
 --   >>> myTakeWhile (< 10) [1..]
 --   [1,2,3,4,5,6,7,8,9]
 
-myTakeWhile f = foldr (\a b -> if f a then a : b else []) []
+myTakeWhile f = foldr (\a b -> bool [] (a : b) $ f a) []
+
+-- | Exercise 1.8.1: myDropWhile
+--   Ref: https://ikb.hatenablog.com/entry/20111219/1324307352 の示唆による
+--
+-- >>> myDropWhile odd [1,1,2,3,4,5]
+-- [2,3,4,5]
+
+myDropWhile f xs = foldr (\a b -> if f a && not (null b) then tail b else xs) [] xs
+
+-- | Exercise 1.8: myDropWhileEnd
+-- 
+--   >>> myDropWhileEnd odd [0,1,1,2,3,4,5]
+--   [0,1,1,2,3,4]
+
+myDropWhileEnd :: Foldable t => (a -> Bool) -> t a -> [a]
+myDropWhileEnd f = foldr (\a b -> if f a && null b then [] else a : b) []
+
+-- | Exercies 1.13: apply
+--
+--  >>> apply 3 (++ "a") "hoge"
+--  "hogeaaa"
+--  >>> apply 4 (* 2) 2
+--  32 
+
+apply :: Int -> (a -> a) -> a -> a 
+apply 0 _ = id
+apply n f = f . apply (n - 1) f
